@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, UTC
 import traceback
 import os
+import webbrowser
+from threading import Timer
 
 from .config import Config
 from .services.display import DisplayGenerator
@@ -25,9 +27,11 @@ CORS(app)
 api_service = APIService()
 display_generator = DisplayGenerator(Config.DISPLAY_WIDTH, Config.DISPLAY_HEIGHT)
 
+def open_browser():
+    webbrowser.open('http://localhost:8080/webhook')
+
 @app.route('/')
 def home():
-    '''Root route that explains the API.'''
     return jsonify({
         'name': 'TRMNL Plugin',
         'description': 'TRMNL Plugin Boilerplate',
@@ -39,16 +43,12 @@ def home():
 
 @app.route('/webhook', methods=['GET'])
 def trmnl_webhook():
-    '''Main webhook endpoint for TRMNL.'''
     try:
-        # Get data from your service
         data = api_service.get_data()
         logger.info(f'Data retrieved: {data}')
         
-        # Generate display
         image_data = display_generator.create_display(data)
         
-        # Return binary image with TRMNL headers
         return Response(
             image_data,
             mimetype='image/bmp',
@@ -67,6 +67,19 @@ def trmnl_webhook():
         )
 
 if __name__ == '__main__':
+    print('=' * 80)
+    print('TRMNL Plugin Development Server')
+    print('=' * 80)
+    print(f'Server URL: http://localhost:{Config.PORT}')
+    print(f'Webhook URL: http://localhost:{Config.PORT}/webhook')
+    print('-' * 80)
+    print('Opening webhook URL in browser...')
+    print('Press Ctrl+C to quit')
+    print('=' * 80)
+    
+    # Open browser after a short delay
+    Timer(1.5, open_browser).start()
+    
     app.run(
         host=Config.HOST,
         port=Config.PORT,
