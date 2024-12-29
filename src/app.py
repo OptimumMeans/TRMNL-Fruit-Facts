@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 import logging
 from datetime import datetime, UTC
@@ -24,61 +24,107 @@ app = Flask(__name__)
 CORS(app)
 
 # Initialize services
+Config.validate()
 api_service = APIService()
 display_generator = DisplayGenerator(Config.DISPLAY_WIDTH, Config.DISPLAY_HEIGHT)
 
-def open_browser():
-    webbrowser.open('http://localhost:8080/webhook')
-
 @app.route('/')
 def home():
+    """Home endpoint with plugin information."""
+    # Check if it's a browser request
+    if request.headers.get('Accept', '').find('text/html') != -1:
+        # Redirect browser requests to webhook
+        return f'''
+        <html>
+            <head>
+                <meta http-equiv="refresh" content="0;url=/webhook">
+            </head>
+            <body>
+                Redirecting to webhook...
+            </body>
+        </html>
+        '''
+    
     return jsonify({
-        'name': 'TRMNL Plugin',
-        'description': 'TRMNL Plugin Boilerplate',
+        'name': 'TRMNL Fruit Facts',
+        'description': 'Displays fruit nutritional facts and information',
         'version': '1.0.0',
         'status': 'running',
         'last_update': api_service.last_update.isoformat() if api_service.last_update else None,
-        'refresh_interval': Config.REFRESH_INTERVAL
+        'refresh_interval': Config.REFRESH_INTERVAL,
+        'rotation_interval': Config.FRUIT_ROTATION_INTERVAL,
+        'fruits_loaded': len(api_service._all_fruits) if api_service._all_fruits else 0
     })
 
 @app.route('/webhook', methods=['GET'])
 def trmnl_webhook():
+    """Main webhook endpoint for TRMNL device."""
     try:
+        # Get fruit data
         data = api_service.get_data()
-        logger.info(f'Data retrieved: {data}')
+        if not data:
+            raise Exception("Failed to fetch fruit data")
         
+        logger.info(
+            f"Serving fruit: {data['fruit']['name']} "
+            f"({data['current_index'] + 1}/{data['total_fruits']})"
+        )
+        
+        # Generate display image
         image_data = display_generator.create_display(data)
         
-        return Response(
+        # Calculate next refresh based on rotation interval
+        next_refresh = min(Config.REFRESH_INTERVAL, Config.FRUIT_ROTATION_INTERVAL)
+        
+        # Set up response
+        response = Response(
             image_data,
             mimetype='image/bmp',
             headers={
-                'X-TRMNL-Refresh': str(Config.REFRESH_INTERVAL),
-                'X-TRMNL-Plugin-UUID': Config.TRMNL_PLUGIN_UUID
+                'X-TRMNL-Refresh': str(next_refresh),
+                'X-TRMNL-Plugin-UUID': Config.TRMNL_PLUGIN_UUID,
+                'Content-Type': 'image/bmp'
             }
         )
+        
+        # Ensure no caching
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        
+        return response
         
     except Exception as e:
         logger.error(f'Webhook error: {str(e)}')
         logger.error(traceback.format_exc())
+        
+        # Create error display
+        error_display = display_generator.create_error_display(
+            f"Error: {str(e)}\nPlease check logs or try again later."
+        )
+        
         return Response(
-            display_generator.create_error_display(str(e)),
-            mimetype='image/bmp'
+            error_display,
+            mimetype='image/bmp',
+            headers={
+                'X-TRMNL-Refresh': '300',  # Retry in 5 minutes on error
+                'X-TRMNL-Plugin-UUID': Config.TRMNL_PLUGIN_UUID,
+                'Content-Type': 'image/bmp'
+            }
         )
 
 if __name__ == '__main__':
     print('=' * 80)
-    print('TRMNL Plugin Development Server')
+    print('TRMNL Fruit Facts Plugin')
     print('=' * 80)
-    print(f'Server URL: http://localhost:{Config.PORT}')
-    print(f'Webhook URL: http://localhost:{Config.PORT}/webhook')
+    print(f'Server URL: http://{Config.HOST}:{Config.PORT}')
     print('-' * 80)
-    print('Opening webhook URL in browser...')
     print('Press Ctrl+C to quit')
     print('=' * 80)
     
-    # Open browser after a short delay
-    Timer(1.5, open_browser).start()
+    # Open browser at startup
+    if Config.HOST == 'localhost':
+        Timer(1.5, lambda: webbrowser.open(f'http://{Config.HOST}:{Config.PORT}/webhook')).start()
     
     app.run(
         host=Config.HOST,
